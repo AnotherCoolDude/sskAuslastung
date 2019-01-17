@@ -44,11 +44,15 @@ func main() {
 	coordsZeitraum := fmt.Sprintf("%s%s", l, strconv.Itoa(n))
 	fmt.Println(coordsZeitraum)
 	xlsx.SetCellStr(sheetName, coordsZeitraum, zeitraum)
+	results := []string{}
 	for _, rec := range recs {
 		if rec.recType != vacation {
 			continue
 		}
-		setValueForEmployee(xlsx, sheetName, rec.name, rec.workingTime)
+		result := setValueForEmployee(xlsx, sheetName, rec.name, rec.workingTime)
+		results = append(results, result)
+	}
+	for r := range results {
 	}
 }
 
