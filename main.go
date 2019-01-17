@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -11,8 +12,8 @@ import (
 )
 
 const (
-	csvPath       = "/Users/christianhovenbitzer/Dropbox/test.csv"
-	excelPath     = "/Users/christianhovenbitzer/Dropbox/übersicht Auslastung  Jan_Okt2018.xlsx"
+	csvPath       = "/Users/empfang/Dropbox/test.csv"
+	excelPath     = "/Users/empfang/Dropbox/übersicht Auslastung  Jan_Okt2018.xlsx"
 	jobNrOvertime = "SEIN-0001-0137"
 	jobNrNoWork   = "SEIN-0001-0113"
 	jobNrSick     = "SEIN-0001-0015"
@@ -36,17 +37,18 @@ func main() {
 	if err != nil {
 		fmt.Println(err)
 	}
-	//zeitraum := "zeitraum"
+
+	zeitraum := "zeitraum"
 	sheetName := xlsx.GetSheetMap()[int(vacation)]
 	l, n := getNextFreeCell(xlsx, sheetName)
 	coordsZeitraum := fmt.Sprintf("%s%s", l, strconv.Itoa(n))
 	fmt.Println(coordsZeitraum)
-	//xlsx.SetCellStr(sheetName, coordsZeitraum, zeitraum)
+	xlsx.SetCellStr(sheetName, coordsZeitraum, zeitraum)
 	for _, rec := range recs {
 		if rec.recType != vacation {
 			continue
 		}
-		setIntForEmployee(xlsx, sheetName, rec.name)
+		setValueForEmployee(xlsx, sheetName, rec.name, rec.workingTime)
 	}
 }
 
@@ -147,8 +149,10 @@ func assignRecords(recs []jobrecord) {
 //excerlize
 
 func coords(coord string) (letter string, number int) {
-	runes := []rune(coord)
-	return string(runes[0]), int(runes[1] - '0')
+	reg := regexp.MustCompile("[0-9]+|[A-Z]+")
+	result := reg.FindAllString(coord, 2)
+	n, _ := strconv.Atoi(result[1])
+	return result[0], n
 }
 
 func getNextFreeCell(file *excelize.File, sheetName string) (letter string, number int) {
@@ -163,18 +167,19 @@ func getNextFreeCell(file *excelize.File, sheetName string) (letter string, numb
 	return "", -1
 }
 
-func setIntForEmployee(file *excelize.File, sheetname, employeename string) {
+func setValueForEmployee(file *excelize.File, sheetname, employeename string, value float32) string {
 	names := strings.Split(employeename, " ")
-	employeeCoords := file.SearchSheet(sheetname, fmt.Sprintf("(?i)(\\W|^)(%s|%s)(\\W|$)", names[0], names[1]), true)
+	employeeCoords := file.SearchSheet(sheetname, fmt.Sprintf("(%s).*(%s)|(%s).*(%s)", names[0], names[1], names[1], names[0]), true)
 	if len(employeeCoords) != 1 {
 		fmt.Printf("\n%s either not found or exists more than once \n", employeename)
 		fmt.Println(employeeCoords)
-		return
+		return ""
 	}
 	_, employeeNumber := coords(employeeCoords[0])
-	//newCellLetter, _ := getNextFreeCell(file, sheetname)
-	value := file.GetCellValue(sheetname, fmt.Sprintf("AR" /*newCellLetter*/, strconv.Itoa(employeeNumber)))
-	fmt.Println(value)
+	newCellLetter, _ := getNextFreeCell(file, sheetname)
+	destCoords := fmt.Sprintf("%s%s", newCellLetter, strconv.Itoa(employeeNumber))
+	file.SetCellValue(sheetname, destCoords, value)
+	return formatChangedValue(destCoords, employeename, value)
 }
 
 //helper
@@ -193,7 +198,6 @@ func sliceInfo(name string, slice []jobrecord) {
 	fmt.Println()
 }
 
-func formatName(name string) string {
-	n := strings.Split(name, " ")
-	return fmt.Sprintf("%s, %s", strings.TrimSpace(n[1]), strings.TrimSpace(n[0]))
+func formatChangedValue(coord, name string, value float32) string {
+	return fmt.Sprintf("%s %s %s", coord, name, fmt.Sprintf("%f", value))
 }
