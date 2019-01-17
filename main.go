@@ -8,12 +8,23 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/alecthomas/kingpin"
+	"github.com/buger/goterm"
+
 	"github.com/360EntSecGroup-Skylar/excelize"
 )
 
+var (
+	app       = kingpin.New("Auslastung", "füllt automatisch die Excel-Datei Auslastung mit dem Proad-Export aus")
+	period    = app.Flag("Zeitraum", "Zeitraum der Proad-Datei").Required().Short('z').String()
+	excelPath = app.Flag("excelPath", "Pfad zu der Excel-Datei").Required().Short('e').String()
+	proadPath = app.Flag("proadPath", "Pfad zu der Proad-Datei").Required().Short('p').String()
+	destPath  = app.Flag("destPath", "ein anderer Speicherort für die Excel-Datei").Short('d').String()
+	parseOnly = app.Flag("csv_only", "nur die Proad-Datei verarbeiten und anzeigen").Short('o').Bool()
+	dontSafe  = app.Flag("dont_safe", "die Änderungen werden nicht gespeichert").Short('s').Bool()
+)
+
 const (
-	csvPath       = "/Users/empfang/Dropbox/test.csv"
-	excelPath     = "/Users/empfang/Dropbox/übersicht Auslastung  Jan_Okt2018.xlsx"
 	jobNrOvertime = "SEIN-0001-0137"
 	jobNrNoWork   = "SEIN-0001-0113"
 	jobNrSick     = "SEIN-0001-0015"
@@ -29,30 +40,34 @@ const (
 )
 
 func main() {
-	defer fmt.Println("leaving main...")
-	recs := parseRecords(csvPath)
+	defer fmt.Println("\nleaving main...")
+
+	kingpin.MustParse(app.Parse(os.Args[1:]))
+	ePath := *excelPath
+	pPath := *proadPath
+	dPath := *destPath
+	period := *period
+
+	recs := parseRecords(pPath)
 	assignRecords(recs)
+	recs.list()
+	if *parseOnly {
+		os.Exit(0)
+	}
+
 	fmt.Println("opening xlsx file:")
-	xlsx, err := excelize.OpenFile(excelPath)
+	xlsx, err := excelize.OpenFile(ePath)
 	if err != nil {
 		fmt.Println(err)
 	}
+	recs.addToExcel(xlsx, period)
 
-	zeitraum := "zeitraum"
-	sheetName := xlsx.GetSheetMap()[int(vacation)]
-	l, n := getNextFreeCell(xlsx, sheetName)
-	coordsZeitraum := fmt.Sprintf("%s%s", l, strconv.Itoa(n))
-	fmt.Println(coordsZeitraum)
-	xlsx.SetCellStr(sheetName, coordsZeitraum, zeitraum)
-	results := []string{}
-	for _, rec := range recs {
-		if rec.recType != vacation {
-			continue
+	if !*dontSafe {
+		if dPath != "" {
+			saveExcel(xlsx, dPath)
+		} else {
+			saveExcel(xlsx, ePath)
 		}
-		result := setValueForEmployee(xlsx, sheetName, rec.name, rec.workingTime)
-		results = append(results, result)
-	}
-	for r := range results {
 	}
 }
 
@@ -71,14 +86,14 @@ type jobrecord struct {
 
 type recordType int
 
-func parseRecords(filePath string) []jobrecord {
+func parseRecords(filePath string) recordCollection {
 	file, err := os.Open(filePath)
 
 	if err != nil {
 		fmt.Printf("error opening file %s: %s", filePath, err)
 	} else {
 		stat, _ := file.Stat()
-		fmt.Printf("using file: %v, size: %d\n\n\n", stat.Name(), stat.Size())
+		fmt.Printf("using file: %v, size: %d\n", stat.Name(), stat.Size())
 	}
 	defer file.Close()
 
@@ -150,16 +165,59 @@ func assignRecords(recs []jobrecord) {
 	fmt.Println()
 }
 
+func createCSV([][]string) {
+
+}
+
 //excerlize
 
-func coords(coord string) (letter string, number int) {
+type recordCollection []jobrecord
+
+func (collection recordCollection) addToExcel(xlsx *excelize.File, period string) {
+	table := goterm.NewTable(0, 10, 6, ' ', 0)
+	for _, rt := range recordTypes() {
+		sheetName := xlsx.GetSheetMap()[int(rt)]
+		if sheetName == "" {
+			fmt.Printf("\nworksheet %v was not found in file %s\n", rt, xlsx.Path)
+			continue
+		}
+		col, row := getNextFreeCell(xlsx, sheetName)
+		if col == "" {
+			fmt.Println("next free cell couldn't be determed")
+		}
+		coordsZeitraum := fmt.Sprintf("%s%s", col, strconv.Itoa(row))
+		xlsx.SetCellStr(sheetName, coordsZeitraum, period)
+
+		fmt.Fprintf(table, "%s\t\t\n", sheetName)
+		fmt.Fprintf(table, "Coords\tName\tValue\n")
+		for _, rec := range collection {
+			if rec.recType != rt {
+				continue
+			}
+			dc, name, cv := setValueForEmployee(xlsx, sheetName, col, rec.name, rec.workingTime)
+			fmt.Fprintf(table, "%s\t%s\t%f\n", dc, name, cv)
+		}
+		fmt.Fprintf(table, "\n")
+		fmt.Println(table.String())
+	}
+
+}
+
+func saveExcel(file *excelize.File, path string) {
+	err := file.SaveAs(path)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
+func coords(coord string) (column string, row int) {
 	reg := regexp.MustCompile("[0-9]+|[A-Z]+")
 	result := reg.FindAllString(coord, 2)
 	n, _ := strconv.Atoi(result[1])
 	return result[0], n
 }
 
-func getNextFreeCell(file *excelize.File, sheetName string) (letter string, number int) {
+func getNextFreeCell(file *excelize.File, sheetName string) (column string, row int) {
 	rows := file.GetRows(sheetName)
 	coordsZeitraum := file.SearchSheet(sheetName, "Zeitraum")
 	_, n := coords(coordsZeitraum[0])
@@ -171,19 +229,23 @@ func getNextFreeCell(file *excelize.File, sheetName string) (letter string, numb
 	return "", -1
 }
 
-func setValueForEmployee(file *excelize.File, sheetname, employeename string, value float32) string {
+func setValueForEmployee(file *excelize.File, sheetname, column, employeename string, value float32) (destcoord, name string, currentValue float32) {
 	names := strings.Split(employeename, " ")
 	employeeCoords := file.SearchSheet(sheetname, fmt.Sprintf("(%s).*(%s)|(%s).*(%s)", names[0], names[1], names[1], names[0]), true)
 	if len(employeeCoords) != 1 {
 		fmt.Printf("\n%s either not found or exists more than once \n", employeename)
 		fmt.Println(employeeCoords)
-		return ""
+		return "n/a", employeename, 0.0
 	}
 	_, employeeNumber := coords(employeeCoords[0])
-	newCellLetter, _ := getNextFreeCell(file, sheetname)
-	destCoords := fmt.Sprintf("%s%s", newCellLetter, strconv.Itoa(employeeNumber))
-	file.SetCellValue(sheetname, destCoords, value)
-	return formatChangedValue(destCoords, employeename, value)
+	destCoords := fmt.Sprintf("%s%s", column, strconv.Itoa(employeeNumber))
+	cellValueString := file.GetCellValue(sheetname, destCoords)
+	cellValue, err := strconv.ParseFloat(cellValueString, 32)
+	if err != nil {
+		cellValue = 0.0
+	}
+	file.SetCellValue(sheetname, destCoords, value+float32(cellValue))
+	return destCoords, employeename, value + float32(cellValue)
 }
 
 //helper
@@ -204,4 +266,54 @@ func sliceInfo(name string, slice []jobrecord) {
 
 func formatChangedValue(coord, name string, value float32) string {
 	return fmt.Sprintf("%s %s %s", coord, name, fmt.Sprintf("%f", value))
+}
+
+func recordTypes() []recordType {
+	return []recordType{
+		overtime,
+		noWork,
+		sick,
+		vacation,
+		intern,
+		customer,
+		pitch,
+	}
+}
+
+func (rectype recordType) toString() string {
+	switch rectype {
+	case overtime:
+		return "overtime"
+	case noWork:
+		return "noWork"
+	case sick:
+		return "sick"
+	case vacation:
+		return "vacation"
+	case intern:
+		return "intern"
+	case customer:
+		return "customer"
+	case pitch:
+		return "pitch"
+	default:
+		return ""
+	}
+}
+
+func (collection recordCollection) list() {
+	for _, rectype := range recordTypes() {
+		fmt.Println()
+		fmt.Println(rectype.toString())
+		table := goterm.NewTable(0, 10, 6, ' ', 0)
+		fmt.Fprintf(table, "Employee\tHours\n")
+		for _, rec := range collection {
+			if rec.recType != rectype {
+				continue
+			}
+			fmt.Fprintf(table, "%s\t%f\n", rec.shortName, rec.workingTime)
+		}
+		fmt.Fprintf(table, "\n")
+		fmt.Print(table.String())
+	}
 }
