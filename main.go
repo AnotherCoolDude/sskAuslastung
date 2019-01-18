@@ -21,8 +21,8 @@ var (
 	excelPath = app.Flag("excelPath", "Pfad zu der Excel-Datei").Required().Short('e').String()
 	proadPath = app.Flag("proadPath", "Pfad zu der Proad-Datei").Required().Short('p').String()
 	destPath  = app.Flag("destPath", "ein anderer Speicherort für die Excel-Datei").Short('d').String()
-	parseOnly = app.Flag("csv_only", "nur die Proad-Datei verarbeiten und anzeigen").Short('o').Bool()
-	dontSafe  = app.Flag("dont_safe", "die Änderungen werden nicht gespeichert").Short('s').Bool()
+	dontSave  = app.Flag("dont_safe", "die Änderungen werden nicht gespeichert").Short('s').Bool()
+	log       = app.Flag("log", "schreibt die Datensätze in das Terminal").Short('l').Bool()
 
 	freelancer = []string{
 		"Tina Botz",
@@ -42,10 +42,11 @@ const (
 	intern   recordType = 4
 	customer recordType = 1
 	pitch    recordType = 2
+	holidays recordType = 7
 )
 
 func main() {
-	defer fmt.Println("\nleaving main...")
+	defer fmt.Println("\nDone")
 
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 	ePath := *excelPath
@@ -54,7 +55,7 @@ func main() {
 	p := *period
 
 	recs := recordCollection{}
-	switch filepath.Ext(ePath) {
+	switch filepath.Ext(pPath) {
 	case ".xlsx":
 		recs = parseRecordsXLSX(pPath)
 	case ".csv":
@@ -65,9 +66,8 @@ func main() {
 	}
 
 	assignRecords(recs)
-	recs.list()
-	if *parseOnly {
-		os.Exit(0)
+	if *log {
+		recs.list()
 	}
 
 	xlsx, err := excelize.OpenFile(ePath)
@@ -78,8 +78,8 @@ func main() {
 		p = strings.TrimSuffix(filepath.Base(pPath), filepath.Ext(pPath))
 	}
 	recs.addToExcel(xlsx, p)
-
-	if !*dontSafe {
+	fmt.Printf("\nPeriod: %s", p)
+	if !*dontSave {
 		if dPath != "" {
 			saveExcel(xlsx, dPath)
 		} else {
@@ -138,6 +138,10 @@ func parseRecordsCSV(filePath string) recordCollection {
 func parseRecords(data [][]string) recordCollection {
 	jobrecords := []jobrecord{}
 	for _, row := range data {
+		//ignore Freelancer
+		if contains(freelancer, row[1]) {
+			continue
+		}
 		wt, _ := strconv.ParseFloat(row[8], 32)
 		newRecord := jobrecord{
 			shortName:   row[0],
@@ -155,10 +159,6 @@ func parseRecords(data [][]string) recordCollection {
 
 func assignRecords(recs []jobrecord) {
 	for i, rec := range recs {
-		//ignore Freelancer
-		if contains(freelancer, rec.name) {
-			continue
-		}
 
 		if rec.jobNr == jobNrVacation {
 			recs[i].registered = true
@@ -198,11 +198,6 @@ func assignRecords(recs []jobrecord) {
 			fmt.Println(recs[i])
 		}
 	}
-	fmt.Println()
-}
-
-func createCSV([][]string) {
-
 }
 
 //excerlize
@@ -211,8 +206,10 @@ type recordCollection []jobrecord
 
 func (collection recordCollection) addToExcel(xlsx *excelize.File, period string) {
 	table := goterm.NewTable(0, 10, 6, ' ', 0)
+	fmt.Printf("attempting to add values to %v sheets\n", len(recordTypes()))
 	for _, rt := range recordTypes() {
 		sheetName := xlsx.GetSheetMap()[int(rt)]
+		fmt.Printf("adding to: %s\n", sheetName)
 		if sheetName == "" {
 			fmt.Printf("\nworksheet %v was not found in file %s\n", rt, xlsx.Path)
 			continue
@@ -226,15 +223,20 @@ func (collection recordCollection) addToExcel(xlsx *excelize.File, period string
 
 		fmt.Fprintf(table, "%s\t\t\n", sheetName)
 		fmt.Fprintf(table, "Coords\tName\tValue\n")
+		amount := 0
 		for _, rec := range collection {
 			if rec.recType != rt {
 				continue
 			}
+			amount = amount + 1
 			dc, name, cv := setValueForEmployee(xlsx, sheetName, col, rec.name, rec.workingTime)
 			fmt.Fprintf(table, "%s\t%s\t%f\n", dc, name, cv)
 		}
+		fmt.Printf("%v values added\n", amount)
 		fmt.Fprintf(table, "\n")
-		fmt.Println(table.String())
+		if *log {
+			fmt.Println(table.String())
+		}
 	}
 
 }
@@ -309,6 +311,7 @@ func recordTypes() []recordType {
 		intern,
 		customer,
 		pitch,
+		holidays,
 	}
 }
 
@@ -328,6 +331,8 @@ func (rectype recordType) toString() string {
 		return "customer"
 	case pitch:
 		return "pitch"
+	case holidays:
+		return "holidays"
 	default:
 		return ""
 	}
