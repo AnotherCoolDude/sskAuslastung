@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,12 +17,16 @@ import (
 
 var (
 	app       = kingpin.New("Auslastung", "füllt automatisch die Excel-Datei Auslastung mit dem Proad-Export aus")
-	period    = app.Flag("Zeitraum", "Zeitraum der Proad-Datei").Required().Short('z').String()
+	period    = app.Flag("Zeitraum", "Zeitraum der Proad-Datei. Falls nicht angegeben, wir der Name der Proad-Datei verwendet").Short('z').String()
 	excelPath = app.Flag("excelPath", "Pfad zu der Excel-Datei").Required().Short('e').String()
 	proadPath = app.Flag("proadPath", "Pfad zu der Proad-Datei").Required().Short('p').String()
 	destPath  = app.Flag("destPath", "ein anderer Speicherort für die Excel-Datei").Short('d').String()
 	parseOnly = app.Flag("csv_only", "nur die Proad-Datei verarbeiten und anzeigen").Short('o').Bool()
 	dontSafe  = app.Flag("dont_safe", "die Änderungen werden nicht gespeichert").Short('s').Bool()
+
+	freelancer = []string{
+		"Tina Botz",
+	}
 )
 
 const (
@@ -46,21 +51,33 @@ func main() {
 	ePath := *excelPath
 	pPath := *proadPath
 	dPath := *destPath
-	period := *period
+	p := *period
 
-	recs := parseRecords(pPath)
+	recs := recordCollection{}
+	switch filepath.Ext(ePath) {
+	case ".xlsx":
+		recs = parseRecordsXLSX(pPath)
+	case ".csv":
+		recs = parseRecordsCSV(pPath)
+	default:
+		fmt.Println("only .xlsx and .csv files are supported")
+		os.Exit(0)
+	}
+
 	assignRecords(recs)
 	recs.list()
 	if *parseOnly {
 		os.Exit(0)
 	}
 
-	fmt.Println("opening xlsx file:")
 	xlsx, err := excelize.OpenFile(ePath)
 	if err != nil {
 		fmt.Println(err)
 	}
-	recs.addToExcel(xlsx, period)
+	if p == "" {
+		p = strings.TrimSuffix(filepath.Base(pPath), filepath.Ext(pPath))
+	}
+	recs.addToExcel(xlsx, p)
 
 	if !*dontSafe {
 		if dPath != "" {
@@ -86,7 +103,17 @@ type jobrecord struct {
 
 type recordType int
 
-func parseRecords(filePath string) recordCollection {
+func parseRecordsXLSX(filePath string) recordCollection {
+	file, err := excelize.OpenFile(filePath)
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	data := file.GetRows(file.GetSheetName(file.GetActiveSheetIndex()))
+	return parseRecords(data)
+}
+
+func parseRecordsCSV(filePath string) recordCollection {
 	file, err := os.Open(filePath)
 
 	if err != nil {
@@ -105,15 +132,19 @@ func parseRecords(filePath string) recordCollection {
 	if err != nil {
 		fmt.Println(err)
 	}
+	return parseRecords(recs)
+}
+
+func parseRecords(data [][]string) recordCollection {
 	jobrecords := []jobrecord{}
-	for _, rec := range recs {
-		wt, _ := strconv.ParseFloat(rec[8], 32)
+	for _, row := range data {
+		wt, _ := strconv.ParseFloat(row[8], 32)
 		newRecord := jobrecord{
-			shortName:   rec[0],
-			name:        rec[1],
-			activity:    rec[3],
-			jobDesc:     rec[6],
-			jobNr:       rec[7],
+			shortName:   row[0],
+			name:        row[1],
+			activity:    row[3],
+			jobDesc:     row[6],
+			jobNr:       row[7],
 			workingTime: float32(wt),
 			registered:  false,
 		}
@@ -124,6 +155,11 @@ func parseRecords(filePath string) recordCollection {
 
 func assignRecords(recs []jobrecord) {
 	for i, rec := range recs {
+		//ignore Freelancer
+		if contains(freelancer, rec.name) {
+			continue
+		}
+
 		if rec.jobNr == jobNrVacation {
 			recs[i].registered = true
 			recs[i].recType = vacation
@@ -255,17 +291,13 @@ func caseInsensitiveContains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
-func sliceInfo(name string, slice []jobrecord) {
-	fmt.Printf("\n%s:\n", name)
-	for _, r := range slice {
-		fmt.Println(r)
+func contains(slice []string, str string) bool {
+	for _, s := range slice {
+		if s == str {
+			return true
+		}
 	}
-	fmt.Println(len(slice))
-	fmt.Println()
-}
-
-func formatChangedValue(coord, name string, value float32) string {
-	return fmt.Sprintf("%s %s %s", coord, name, fmt.Sprintf("%f", value))
+	return false
 }
 
 func recordTypes() []recordType {
