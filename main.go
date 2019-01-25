@@ -30,8 +30,8 @@ var (
 )
 
 const (
-	jobNrOvertime = "SEIN-0001-0137"
-	jobNrNoWork   = "SEIN-0001-0113"
+	jobNrOvertime = "SEIN-0001-0167"
+	jobNrNoWork   = "SEIN-0001-0169"
 	jobNrSick     = "SEIN-0001-0015"
 	jobNrVacation = "SEIN-0001-0012"
 
