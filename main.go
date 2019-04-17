@@ -109,7 +109,7 @@ func parseRecordsXLSX(filePath string) recordCollection {
 		fmt.Println(err)
 		return nil
 	}
-	data := file.GetRows(file.GetSheetName(file.GetActiveSheetIndex()))
+	data, _ := file.GetRows(file.GetSheetName(file.GetActiveSheetIndex()))
 	return parseRecords(data)
 }
 
@@ -256,12 +256,13 @@ func coords(coord string) (column string, row int) {
 }
 
 func getNextFreeCell(file *excelize.File, sheetName string) (column string, row int) {
-	rows := file.GetRows(sheetName)
-	coordsZeitraum := file.SearchSheet(sheetName, "Zeitraum")
+	rows, _ := file.GetRows(sheetName)
+	coordsZeitraum, _ := file.SearchSheet(sheetName, "Zeitraum")
 	_, n := coords(coordsZeitraum[0])
 	for i, value := range rows[n-1] {
 		if value == "" {
-			return excelize.ToAlphaString(i), n
+			col, _ := excelize.ColumnNumberToName(i + 1)
+			return col, n
 		}
 	}
 	return "", -1
@@ -269,7 +270,7 @@ func getNextFreeCell(file *excelize.File, sheetName string) (column string, row 
 
 func setValueForEmployee(file *excelize.File, sheetname, column, employeename string, value float32) (destcoord, name string, currentValue float32) {
 	names := strings.Split(employeename, " ")
-	employeeCoords := file.SearchSheet(sheetname, fmt.Sprintf("(%s).*(%s)|(%s).*(%s)", names[0], names[1], names[1], names[0]), true)
+	employeeCoords, _ := file.SearchSheet(sheetname, fmt.Sprintf("(%s).*(%s)|(%s).*(%s)", names[0], names[1], names[1], names[0]), true)
 	if len(employeeCoords) != 1 {
 		fmt.Printf("\n%s either not found or exists more than once \n", employeename)
 		fmt.Println(employeeCoords)
@@ -277,7 +278,7 @@ func setValueForEmployee(file *excelize.File, sheetname, column, employeename st
 	}
 	_, employeeNumber := coords(employeeCoords[0])
 	destCoords := fmt.Sprintf("%s%s", column, strconv.Itoa(employeeNumber))
-	cellValueString := file.GetCellValue(sheetname, destCoords)
+	cellValueString, _ := file.GetCellValue(sheetname, destCoords)
 	cellValue, err := strconv.ParseFloat(cellValueString, 32)
 	if err != nil {
 		cellValue = 0.0
